@@ -1,60 +1,63 @@
-name: "CodeQL Advanced"
+name: CodeQL
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [main, master, develop]
   pull_request:
-    branches: [ "master" ]
+    branches: [main, master, develop]
   schedule:
     - cron: '36 22 * * 1'
 
+permissions:
+  security-events: write
+  packages: read
+  actions: read
+  contents: read
+
 jobs:
-  analyze:
-    name: Analyze (${{ matrix.language }} - ${{ matrix.project }})
+  codeql:
+    name: Compile all Maven projects and analyze with CodeQL
     runs-on: ubuntu-latest
-
-    permissions:
-      security-events: write
-      packages: read
-      actions: read
-      contents: read
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - language: java-kotlin
-            build-mode: none
-            project: spring-boot-crud-rest
-
-          - language: java-kotlin
-            build-mode: none
-            project: springboot-thymeleaf-security-demo
-
-          - language: javascript-typescript
-            build-mode: none
-            project: registration-login-springboot-security-thymeleaf
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Make Maven wrappers executable
-        if: matrix.language == 'java-kotlin'
         shell: bash
         run: |
           find . -name mvnw -type f -exec chmod +x {} \;
 
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
-          languages: ${{ matrix.language }}
-          build-mode: ${{ matrix.build-mode }}
-          config: |
-            paths:
-              - ${{ matrix.project }}
+          languages: java-kotlin
+          build-mode: manual
+
+      - name: Compile all Maven projects for CodeQL
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          find . -name pom.xml \
+            -not -path '*/target/*' \
+            -not -path './.git/*' \
+            -not -path './pom.xml' \
+            | sort \
+            | while read -r pom; do
+                dir="$(dirname "$pom")"
+                echo "Compiling Maven project for CodeQL: $dir"
+                mvn -B -f "$pom" -DskipTests clean compile
+              done
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
         with:
-          category: "/language:${{ matrix.language }}/${{ matrix.project }}"
+          category: "/language:java-kotlin"
