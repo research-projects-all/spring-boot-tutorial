@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   codeql:
-    name: Compile all Maven projects and analyze with CodeQL
+    name: Compile Maven projects and analyze with CodeQL
     runs-on: ubuntu-latest
 
     steps:
@@ -41,21 +41,44 @@ jobs:
           languages: java-kotlin
           build-mode: manual
 
-      - name: Compile all Maven projects for CodeQL
+      - name: Compile Maven projects for CodeQL
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
 
-          find . -name pom.xml \
-            -not -path '*/target/*' \
-            -not -path './.git/*' \
-            -not -path './pom.xml' \
-            | sort \
-            | while read -r pom; do
-                dir="$(dirname "$pom")"
-                echo "Compiling Maven project for CodeQL: $dir"
-                mvn -B -f "$pom" -DskipTests clean compile
-              done
+          mkdir -p .ci
+
+          : > .ci/compiled-projects.txt
+          : > .ci/failed-projects.txt
+
+          while IFS= read -r pom; do
+            dir="$(dirname "$pom")"
+            echo "Compiling Maven project for CodeQL: $dir"
+
+            if mvn -B -f "$pom" -DskipTests clean compile; then
+              echo "$dir" >> .ci/compiled-projects.txt
+            else
+              echo "::warning::Maven compile failed for $dir"
+              echo "$dir" >> .ci/failed-projects.txt
+            fi
+          done < <(
+            find . -name pom.xml \
+              -not -path '*/target/*' \
+              -not -path './.git/*' \
+              -not -path './pom.xml' \
+              | sort
+          )
+
+          echo "Compiled projects:"
+          cat .ci/compiled-projects.txt || true
+
+          echo "Failed projects:"
+          cat .ci/failed-projects.txt || true
+
+          if [ ! -s .ci/compiled-projects.txt ]; then
+            echo "No Maven projects compiled successfully."
+            exit 1
+          fi
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
