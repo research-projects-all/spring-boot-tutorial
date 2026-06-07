@@ -1,0 +1,61 @@
+name: SonarCloud
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  sonarcloud:
+    name: SonarCloud - ${{ matrix.project }}
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - project: spring-boot-crud-rest
+            java: '17'
+          - project: springboot-thymeleaf-security-demo
+            java: '8'
+          - project: registration-login-springboot-security-thymeleaf
+            java: '8'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          cache: maven
+
+      - name: Compile Maven project
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${{ matrix.project }}"
+          mvn -B -DskipTests clean compile
+
+      - name: SonarCloud scan
+        uses: SonarSource/sonarqube-scan-action@v8.1.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          projectBaseDir: ${{ matrix.project }}
+          args: >
+            -Dsonar.organization=research-projects-all
+            -Dsonar.projectKey=research-projects-all_${{ matrix.project }}
+            -Dsonar.sources=src
+            -Dsonar.java.binaries=target/classes
+            -Dsonar.exclusions=**/target/**,**/.mvn/**,**/mvnw,**/mvnw.cmd
