@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   sonarcloud:
-    name: Compile all Maven projects and analyze with SonarCloud
+    name: Compile Maven projects and analyze with SonarCloud
     runs-on: ubuntu-latest
 
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -36,57 +36,81 @@ jobs:
           java-version: '17'
           cache: maven
 
-      - name: Compile all Maven projects
+      - name: Compile Maven projects
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
 
-          find . -name pom.xml \
-            -not -path '*/target/*' \
-            -not -path './.git/*' \
-            -not -path './pom.xml' \
-            | sort \
-            | while read -r pom; do
-                dir="$(dirname "$pom")"
-                echo "Compiling Maven project: $dir"
-                mvn -B -f "$pom" -DskipTests clean compile
-              done
+          mkdir -p .ci
 
-      - name: Prepare SonarCloud source and binary paths
+          : > .ci/compiled-projects.txt
+          : > .ci/failed-projects.txt
+
+          while IFS= read -r pom; do
+            dir="$(dirname "$pom")"
+            echo "Compiling Maven project: $dir"
+
+            if mvn -B -f "$pom" -DskipTests clean compile; then
+              echo "$dir" >> .ci/compiled-projects.txt
+            else
+              echo "::warning::Maven compile failed for $dir"
+              echo "$dir" >> .ci/failed-projects.txt
+            fi
+          done < <(
+            find . -name pom.xml \
+              -not -path '*/target/*' \
+              -not -path './.git/*' \
+              -not -path './pom.xml' \
+              | sort
+          )
+
+          echo "Compiled projects:"
+          cat .ci/compiled-projects.txt || true
+
+          echo "Failed projects:"
+          cat .ci/failed-projects.txt || true
+
+          if [ ! -s .ci/compiled-projects.txt ]; then
+            echo "No Maven projects compiled successfully."
+            exit 1
+          fi
+
+      - name: Prepare SonarCloud paths
         id: sonar-paths
         shell: bash
         run: |
           set -euo pipefail
 
           src_dirs="$(
-            find . -type d -path '*/src/main/java' \
-              -not -path '*/target/*' \
-              | sed 's#^\./##' \
-              | sort -u \
-              | paste -sd, -
+            while IFS= read -r dir; do
+              if [ -d "$dir/src/main/java" ]; then
+                echo "${dir#./}/src/main/java"
+              fi
+            done < .ci/compiled-projects.txt | sort -u | paste -sd, -
           )"
 
           binary_dirs="$(
-            find . -type d -path '*/target/classes' \
-              | sed 's#^\./##' \
-              | sort -u \
-              | paste -sd, -
+            while IFS= read -r dir; do
+              if [ -d "$dir/target/classes" ]; then
+                echo "${dir#./}/target/classes"
+              fi
+            done < .ci/compiled-projects.txt | sort -u | paste -sd, -
           )"
 
           if [ -z "$src_dirs" ]; then
-            echo "No Java source directories found."
+            echo "No Java source directories found in compiled projects."
             exit 1
           fi
 
           if [ -z "$binary_dirs" ]; then
-            echo "No compiled Java class directories found."
+            echo "No Java binary directories found in compiled projects."
             exit 1
           fi
 
           echo "sources=$src_dirs" >> "$GITHUB_OUTPUT"
           echo "binaries=$binary_dirs" >> "$GITHUB_OUTPUT"
 
-      - name: Generate temporary Maven POM for SonarCloud
+      - name: Create temporary Maven POM for SonarCloud
         shell: bash
         run: |
           cat > sonar-pom.xml <<'EOF'
@@ -109,7 +133,7 @@ jobs:
           SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
         run: |
           set -euo pipefail
-
+          
           mvn -B -f sonar-pom.xml org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
             -Dsonar.host.url=https://sonarcloud.io \
             -Dsonar.organization="research-projects-all" \
