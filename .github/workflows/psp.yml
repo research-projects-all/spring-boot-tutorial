@@ -25,7 +25,7 @@ jobs:
       - name: Pedagogical SAST Profile PSP
         uses: research-projects-all/Pedagogical-SAST-Profile-PSP@v2.0.0
         with:
-          framework: auto
+          framework: spring
           scan-path: .
           output-format: sarif
           output-file: psp-results.sarif
