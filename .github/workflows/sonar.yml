@@ -29,81 +29,79 @@ jobs:
         run: |
           find . -name mvnw -type f -exec chmod +x {} \;
 
-      - name: Set up JDK 8 for old Spring Boot projects
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '8'
-          cache: maven
-
-      - name: Compile all Maven projects
-        shell: bash
-        run: |
-          set -uo pipefail
-
-          failed=0
-
-          while IFS= read -r pom; do
-            dir="$(dirname "$pom")"
-            echo "Compiling Maven project: $dir"
-
-            if ! mvn -B -f "$pom" -DskipTests clean compile; then
-              echo "::error::Maven compile failed for $dir"
-              failed=1
-            fi
-          done < <(
-            find . -name pom.xml \
-              -not -path '*/target/*' \
-              -not -path './.git/*' \
-              -not -path './pom.xml' \
-              | sort
-          )
-
-          exit "$failed"
-
-      - name: Generate SonarCloud aggregator POM
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cat > sonar-aggregate-pom.xml <<'EOF'
-          <project xmlns="http://maven.apache.org/POM/4.0.0"
-                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
-            <modelVersion>4.0.0</modelVersion>
-            <groupId>generated.sonar</groupId>
-            <artifactId>sonar-aggregate</artifactId>
-            <version>1.0.0</version>
-            <packaging>pom</packaging>
-            <modules>
-          EOF
-
-          find . -name pom.xml \
-            -not -path '*/target/*' \
-            -not -path './.git/*' \
-            -not -path './pom.xml' \
-            | sed 's#^\./##' \
-            | xargs -n1 dirname \
-            | sort -u \
-            | while IFS= read -r module; do
-                echo "              <module>$module</module>" >> sonar-aggregate-pom.xml
-              done
-
-          cat >> sonar-aggregate-pom.xml <<'EOF'
-            </modules>
-          </project>
-          EOF
-
-          cat sonar-aggregate-pom.xml
-
-      - name: Set up JDK 17 for SonarCloud scanner
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
           cache: maven
 
-      - name: Analyze with SonarCloud using Maven
+      - name: Compile all Maven projects
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          find . -name pom.xml \
+            -not -path '*/target/*' \
+            -not -path './.git/*' \
+            -not -path './pom.xml' \
+            | sort \
+            | while read -r pom; do
+                dir="$(dirname "$pom")"
+                echo "Compiling Maven project: $dir"
+                mvn -B -f "$pom" -DskipTests clean compile
+              done
+
+      - name: Prepare SonarCloud source and binary paths
+        id: sonar-paths
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          src_dirs="$(
+            find . -type d -path '*/src/main/java' \
+              -not -path '*/target/*' \
+              | sed 's#^\./##' \
+              | sort -u \
+              | paste -sd, -
+          )"
+
+          binary_dirs="$(
+            find . -type d -path '*/target/classes' \
+              | sed 's#^\./##' \
+              | sort -u \
+              | paste -sd, -
+          )"
+
+          if [ -z "$src_dirs" ]; then
+            echo "No Java source directories found."
+            exit 1
+          fi
+
+          if [ -z "$binary_dirs" ]; then
+            echo "No compiled Java class directories found."
+            exit 1
+          fi
+
+          echo "sources=$src_dirs" >> "$GITHUB_OUTPUT"
+          echo "binaries=$binary_dirs" >> "$GITHUB_OUTPUT"
+
+      - name: Generate temporary Maven POM for SonarCloud
+        shell: bash
+        run: |
+          cat > sonar-pom.xml <<'EOF'
+          <project xmlns="http://maven.apache.org/POM/4.0.0"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+            <modelVersion>4.0.0</modelVersion>
+            <groupId>generated.sonar</groupId>
+            <artifactId>spring-boot-tutorial-sonar</artifactId>
+            <version>1.0.0</version>
+            <packaging>pom</packaging>
+          </project>
+          EOF
+
+      - name: Analyze with SonarCloud using Maven scanner
         shell: bash
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -112,10 +110,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          mvn -B -f sonar-aggregate-pom.xml org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
+          mvn -B -f sonar-pom.xml org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
             -Dsonar.host.url=https://sonarcloud.io \
             -Dsonar.organization="research-projects-all" \
             -Dsonar.projectKey="research-projects-all_spring-boot-tutorial" \
-            -Dsonar.projectName="spring-boot-tutorial" \
             -Dsonar.token="$SONAR_TOKEN" \
+            -Dsonar.sources="${{ steps.sonar-paths.outputs.sources }}" \
+            -Dsonar.java.binaries="${{ steps.sonar-paths.outputs.binaries }}" \
             -Dsonar.exclusions="**/target/**,**/.mvn/**,**/mvnw,**/mvnw.cmd,**/node_modules/**,**/dist/**,**/build/**"
