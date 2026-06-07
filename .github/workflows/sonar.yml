@@ -55,7 +55,7 @@ jobs:
           projectBaseDir: ${{ matrix.project }}
           args: >
             -Dsonar.organization=research-projects-all
-            -Dsonar.projectKey=research-projects-all_${{ matrix.project }}
+            -Dsonar.projectKey=research-projects-all_spring-boot-tutorial
             -Dsonar.sources=src
             -Dsonar.java.binaries=target/classes
             -Dsonar.exclusions=**/target/**,**/.mvn/**,**/mvnw,**/mvnw.cmd
